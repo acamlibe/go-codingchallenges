@@ -10,6 +10,20 @@ import (
 	"unicode"
 )
 
+type Counters struct {
+	Bytes uint64
+	Chars uint64
+	Words uint64
+	Lines uint64
+}
+
+type Options struct {
+	PrintBytes bool
+	PrintChars bool
+	PrintWords bool
+	PrintLines bool
+}
+
 func main() {
 	cPtr := flag.Bool("c", false, "list # of bytes")
 	lPtr := flag.Bool("l", false, "list # of lines")
@@ -24,83 +38,81 @@ func main() {
 		*wPtr = true
 	}
 
+	options := Options{
+		PrintBytes: *cPtr, 
+		PrintChars: *mPtr,
+		PrintWords: *wPtr, 
+		PrintLines: *lPtr,
+	}
+
 	args := flag.Args()
 
-	fmt.Println(args)
+	var err error
 
 	if len(args) == 0 {
-
-		return
+		err = handleStdIn(&options)
+	} else {
+		err = handleFiles(args, &options)
 	}
 
-	var totalLines, totalWords, totalChars, totalBytes uint64
-
-	for _, v := range args {
-		f, err := os.Open(v)
-
-		if err != nil {
-			log.Fatalln(err)
-		}
-
-		var r io.Reader = f
-
-		lines, words, chars, bytes, err := count(r)
-
-		totalLines += lines
-		totalWords += words
-		totalChars += chars
-		totalBytes += bytes
-
-		fmt.Print("\t")
-
-		if *lPtr {
-			fmt.Printf("%d ", lines)
-		}
-
-		if *wPtr {
-			fmt.Printf("%d ", words)
-		}
-
-		if *mPtr {
-			fmt.Printf("%d ", chars)
-		}
-
-		if *cPtr {
-			fmt.Printf("%d ", bytes)
-		}
-
-		fmt.Print(v + "\n")
-
-		f.Close()
-	}
-
-	if len(args) > 1 {
-		fmt.Print("\t")
-
-		if *lPtr {
-			fmt.Printf("%d ", totalLines)
-		}
-
-		if *wPtr {
-			fmt.Printf("%d ", totalWords)
-		}
-
-		if *mPtr {
-			fmt.Printf("%d ", totalChars)
-		}
-
-		if *cPtr {
-			fmt.Printf("%d ", totalBytes)
-		}
-
-		fmt.Print("total")
+	if err != nil {
+		log.Fatalln(err)
 	}
 }
 
-func count(r io.Reader) (lines, words, chars, bytes uint64, err error) {
+func handleStdIn(options *Options) error {
+	counters, err := count(os.Stdin)
+
+	if err != nil {
+		return fmt.Errorf("Failed to count stdin: %w", err)
+	}
+
+	print("", counters, options)
+
+	return nil
+}
+
+func handleFiles(files []string, options *Options) error {
+	totalCounters := Counters{}
+
+	for _, v := range files {
+		f, err := os.Open(v)
+
+		if err != nil {
+			return fmt.Errorf("Failed to open file: %w", err)
+		}
+
+		defer f.Close()
+
+		var r io.Reader = f
+
+		counters, err := count(r)
+
+		if err != nil {
+			return fmt.Errorf("Failed to count file: %w", err)
+		}
+
+		totalCounters.Lines += counters.Lines
+		totalCounters.Words += counters.Words
+		totalCounters.Chars += counters.Chars
+		totalCounters.Bytes += counters.Bytes
+
+		print(v, counters, options)
+	}
+
+	if len(files) > 1 {
+		print("total", &totalCounters, options)
+	}
+
+	return nil
+}
+
+func count(r io.Reader) (*Counters, error) {
 	br := bufio.NewReader(r)
 
 	inWord := false
+
+	counters := Counters{}
 
 	for {
 		char, size, err := br.ReadRune()
@@ -110,23 +122,45 @@ func count(r io.Reader) (lines, words, chars, bytes uint64, err error) {
 				break
 			}
 
-			return 0, 0, 0, 0, fmt.Errorf("Failed to read character from file: %w", err)
+			return nil, fmt.Errorf("Failed to read character from file: %w", err)
 		}
 
-		bytes += uint64(size)
-		chars++
+		counters.Bytes += uint64(size)
+		counters.Chars++
 
 		if char == '\n' {
-			lines++
+			counters.Lines++
 		}
 
 		if unicode.IsSpace(char) {
 			inWord = false			
 		} else if !inWord {
-			words++
+			counters.Words++
 			inWord = true
 		}
 	}
 
-	return
+	return &counters, nil
+}
+
+func print(desc string, counters *Counters, options *Options) {
+	fmt.Print("\t")
+
+	if options.PrintLines {
+		fmt.Printf("%d\t", counters.Lines)
+	}
+
+	if options.PrintWords {
+		fmt.Printf("%d\t", counters.Words)
+	}
+
+	if options.PrintChars {
+		fmt.Printf("%d\t", counters.Chars)
+	}
+
+	if options.PrintBytes {
+		fmt.Printf("%d\t", counters.Bytes)
+	}
+
+	fmt.Print(desc + "\n")
 }
